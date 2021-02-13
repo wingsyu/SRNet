@@ -768,6 +768,7 @@ def get_weight_1(node_index, mid_w_del, out_w_del, Erf, layer):
 if __name__ == '__main__':
 
     """2:00 ---       """
+    # 采用4块1080ti进行训练
     os.environ['CUDA_VISIBLE_DEVICES'] = '0,1,2,3'
 
     # np.save("/data/hongwu/hongwu.npy", class_name)
@@ -776,17 +777,18 @@ if __name__ == '__main__':
     # for x in range(10000000000000):
     print("------------程序开始------------")
         # sleepawhile(2)
-    # mkdirsds()
-    # getNormal()
-    # cal_wasserstein()
-    # cw()
-    # cal_weight(class_name[0])
-    # pool_cal_w("n01697457", 3, "in")
-    # getTrain()
-    # getVal()
-    # consData()
+    mkdirsds()
+    getNormal()
+    cal_wasserstein()
+    cw()
+    cal_weight(class_name[0])
+    pool_cal_w("n01697457", 3, "in")
+    getTrain()
+    getVal()
+    consData()
     train()
-    # test()
+    test()
+    
         # inResult, outResult = Optimaze_1(get_weight_1, next_random=False)
     # np.save("/data/hongwu/inResult.npy", inResult)
     # np.save("/data/hongwu/outResult.npy", outResult)
