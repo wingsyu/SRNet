@@ -1,21 +1,21 @@
 # -*- encoding: utf-8 -*-
 
 import argparse
-import datetime
+# import datetime
 import multiprocessing
 import random
-import threading
-
+# import threading
 from PIL import Image
 from scipy import fft
 import pandas as pd
-from scipy.stats import norm
+# from scipy.stats import norm
 from scipy.signal import find_peaks
 import scipy.stats
-from statsmodels.tsa import tsatools, stattools
+# from statsmodels.tsa import tsatools, stattools
+from torch.utils.data.distributed import DistributedSampler
 
 from scipy import stats
-from statsmodels.tsa.stattools import adfuller, coint
+# from statsmodels.tsa.stattools import adfuller, coint
 import numpy as np
 # import keras
 import requests
@@ -27,10 +27,14 @@ from imgaug import augmenters as iaa
 import torch, torchvision
 import os
 from random import sample
+
+import torch.nn.functional as F
+from statsmodels.tsa.stattools import coint
+from torch import nn
 from torchvision import datasets
 from torchvision import transforms
 import torch.utils.data as utils
-from scipy.stats import entropy
+# from scipy.stats import entropy
 from scipy.stats import wasserstein_distance
 import shutil
 import time
@@ -40,11 +44,20 @@ import math
 from pathlib import Path
 from sklearn.metrics import mean_squared_error
 from multiprocessing import Pool
-import statsmodels.api as sm
+# import statsmodels.api as sm
+# import transformers
+import cupy as cp
+
+from tqdm import tqdm
+
+from torch.utils.data import TensorDataset, Dataset, DataLoader
+from torch.autograd import Variable
 
 # 本节介绍数据增强的几个方法：
 ## 首先是keras的随机干扰，生成一定数量的随机干扰图片
-from main_1 import WORK_DIR, experience_id, shape, model_name
+from main import WORK_DIR, experience_id, shape, model_name
+
+weight_num = 0
 
 snake = ['n01728572', 'n01728920', 'n01729322', 'n01729977', 'n01734418', 'n01735189', 'n01737021',
          'n01739381', 'n01740131', 'n01742172', 'n01744401', 'n01748264', 'n01749939', 'n01751748',
@@ -93,10 +106,40 @@ violin = ["n04536866"]
 test_class = ['n03982430', 'n03876231', 'n03874599', 'n03775546', 'n03527444', 'n02799071', 'n02877765',
               'n03937543', 'n04447861', 'n12985857', 'n12144580']
 
-concepts = [snake]
-random_class = []
-for concept in concepts:
-    random_class.extend(concept)
+
+# class_name = ["n01514668", "n01644373", "n01667114", "n01704323",
+#               "n01729977", "n01773157", "n01806143", "n01978455",
+#               "n02086079", "n02120079", "n02123597", "n02165456",
+#               "n02277742", "n02361337", "n02422699", "n02484975",
+#               "n02749479", "n02804414", "n02869837", "n02930766"]
+
+# class_name = ['n02091831', 'n03532672', 'n02101556', 'n02093647', 'n02105855', 'n15075141', 'n04606251', 'n02104365',
+#               'n07920052', 'n01697457', 'n02443484', 'n01770393', 'n02410509', 'n04560804', 'n03721384', 'n02219486',
+#               'n02094258', 'n02165105', 'n07717410', 'n03769881', 'n02808440', 'n03063689', 'n02097209', 'n02794156',
+#               'n03065424', 'n04336792', 'n03376595', 'n03388549', 'n02361337', 'n03733805', 'n02167151', 'n03832673',
+#               'n01698640', 'n02457408', 'n03062245', 'n02102040', 'n01843383', 'n07734744', 'n04409515', 'n02051845',
+#               'n10148035', 'n04344873', 'n02206856', 'n02111129', 'n07693725', 'n07892512', 'n01986214', 'n01675722',
+#               'n02708093', 'n02494079', 'n02087046', 'n03924679', 'n03271574', 'n02017213', 'n02910353', 'n01704323',
+#               'n02106166', 'n02097474', 'n03770679', 'n01774384', 'n03425413', 'n03482405', 'n04389033', 'n03877472',
+#               'n02168699', 'n03840681', 'n02009229', 'n03792782', 'n07760859', 'n04399382', 'n04380533', 'n03527444',
+#               'n12057211', 'n01882714', 'n02422699', 'n02412080', 'n04251144', 'n03891332', 'n01530575', 'n01496331',
+#               'n02007558', 'n04355338', 'n02128925', 'n03443371', 'n04310018', 'n01669191', 'n03207941', 'n02087394',
+#               'n01981276', 'n04579145', 'n04350905', 'n01945685', 'n02115913', 'n03793489', 'n04597913', 'n02113712',
+#               'n02326432', 'n04550184', 'n03478589', 'n03724870']
+
+
+# butterfly1 = ['n02276258', 'n02277742', 'n02279972', 'n02280649', 'n02281406', 'n02281787']
+# bird1 = ['n02002724', 'n02006656', 'n02007558', 'n02009229', 'n02009912', 'n02011460', 'n02012849', 'n02013706']
+# spider1 = ['n01773157', 'n01773549', 'n01773797', 'n01774384', 'n01774750', 'n01775062']
+
+# class_name = butterfly1 + bird1 + spider1
+
+def get_class_name():
+    class_index_dict = datasets.ImageFolder("/data/imagenet_2012/val").classes
+    return class_index_dict
+
+
+class_name = get_class_name()
 
 
 # def keras_dataGenerator(source_path, target_path, img_num):
@@ -644,9 +687,10 @@ class AverageMeter(object):
         self.avg = self.sum / self.count
 
 
-def accuracy(output, target, topk=(1,)):
+def accuracy(output, target, topk=(1,), tratime=1):
     '''
     获取模型准确度，一般获取前1个和前5个的准确度。
+    :param tratime:
     :param output: 输出结果
     :param target: 目标
     :param topk: 前几个准确度
@@ -666,9 +710,10 @@ def accuracy(output, target, topk=(1,)):
     return res
 
 
-def data_loader(root, batch_size=64, workers=1, mode="val", pin_memory=False):
+def data_loader(root, batch_size=16, workers=1, mode="val", pin_memory=False):
     '''
     使用数据集生成dataloader
+    :param mode:
     :param root: 数据集的文件夹
     :param batch_size:
     :param workers:
@@ -738,95 +783,135 @@ def imagenet_class_index_dic():
     return index_dic
 
 
+def save_output(model, val_loader):
+    model.eval()
+    result = np.zeros((1, 1000))
+    with torch.no_grad():
+        for i, (input, _) in enumerate(val_loader):
+            if i % 100 == 0:
+                print(i)
+            input = torch.autograd.Variable(input)
+            output = model(input)
+            result = np.concatenate((result, output.detach().cpu().numpy()))
+    np.save("/data/hongwu/mid_result/result.npy", result[1:])
+
+
 # 验证js，通过node来对节点进行删除，将node转化为0、1向量，直接采用与中间结果相乘即可，
-def validate_js(val_loader, model, criterion, print_freq, node, tresh, thread_num, filename, class_name, is_cuda=False):
-    batch_time = AverageMeter()
-    losses = AverageMeter()
-    top1 = AverageMeter()
-    top5 = AverageMeter()
+def validate_js(model, criterion, print_freq, node, tresh, thread_num, filename, class_name, is_cuda=False):
+    # batch_time = AverageMeter()
     node = torch.from_numpy(node)
 
     model.eval()
 
-    # # 对node进行处理
-    # if tresh != 1:
-    #     for i in range(shape[0]):
-    #         for j in range(shape[1]):
-    #             for k in range(shape[2]):
-    #                 if node[i, j, k] < tresh:
-    #                     node[i, j, k] = 0
-    #                 else:
-    #                     node[i, j, k] = 1
+    im_dict = imagenet_class_index_dic()
+    this_ta = int(im_dict[class_name])
 
-    end = time.time()
-    for i, (input_, _) in enumerate(val_loader):
+    this_num = 0
+    all_num = 0
 
-        with torch.no_grad():
-            # output = model(input_)
-            if is_cuda:
-                node = node.cuda()
-                input_ = input_.cuda()
+    for i in range(5):
+        mid_result = np.load("/data/hongwu/mid_result/mid_result_" + str(i) + ".npy")
+        mid_result = torch.tensor(mid_result, dtype=torch.float32)
 
-            try:
-                # compute output
-                #             output = model(input)
-                if model_name == "res50":
-                    mid = (model.layer4(model.layer3(model.layer2(model.layer1(model.maxpool(model.relu(
-                        model.bn1(model.conv1(input_))
-                    )))))))
-                else:
-                    mid = model.features(input_)
-                # print(mid.dtype, node.dtype)
-                for k in range(mid.size()[0]):
-                    mid[k] = mid[k] * node
+        for k in range(mid_result.size()[0]):
+            mid_result[k] = mid_result[k].mul(node)
+        # print(mid_result.size())
+        # print(model.avgpool(mid_result).view(10000, 2048).size())
+        output = model.fc(model.avgpool(mid_result).view(10000, 2048))
+        this_tar = np.array([this_ta for i in range(mid_result.size()[0])])
 
-            except Exception as e:
-                print(e)
-            # print("mid_shape: ", (mid.size()))
-            if model_name == "res50":
-                mid = model.avgpool(mid)
-                mid = np.reshape(mid, (mid.size()[0], -1))
-                output = model.fc(mid)
-            else:
-                mid = np.reshape(mid, (mid.size()[0], -1))
-                output = model.classifier(mid)
+        # print(output.size())
 
-            # loss = criterion(output, target)
-            # measure accuracy and record loss
+        target = np.zeros((200, 50))
+        for j in range(200):
+            target[j] = np.array([j + 200 * i] * 50)
+        target = np.reshape(target, (-1,))
 
-            # print(output)
-            im_dict = imagenet_class_index_dic()
-            target = int(im_dict[class_name])
-            # print(target)
-            target = torch.tensor([target for i in range(np.shape(input_)[0])])
+        # print(target)
 
-            if is_cuda:
-                target = target.cuda()
+        targ = np.argmax(output.detach().cpu().numpy(), axis=1)
+        # print(this_tar.shape)
+        # print(targ.shape)
+        # print(target.shape)
+        all_num += sum(targ == this_tar)
+        this_num += sum((targ == target) & (targ == this_tar))
 
-            prec1, prec5 = accuracy(output.data, target, topk=(1, 5))
-            # losses.update(loss.item(), input_.size(0))
-            top1.update(prec1[0], input_.size(0))
-            top5.update(prec5[0], input_.size(0))
-            # measure elapsed time
-            batch_time.update(time.time() - end)
-            end = time.time()
-            if i % print_freq == 0:
-                print(str(thread_num), 'Test: [{0}/{1}]\t'
-                                       'Time {batch_time.val:.3f} ({batch_time.avg:.3f})\t'
-                                       'Prec@1 {top1.val:.3f} ({top1.avg:.3f})\t'
-                                       'Prec@5 {top5.val:.3f} ({top5.avg:.3f})'.format(
-                    i, len(val_loader), batch_time=batch_time,
-                    top1=top1, top5=top5))
+    print(all_num, this_num)
+
+    # end = time.time()
+    # for i, (input_, target) in enumerate(val_loader):
+    #     if i % 10 == 0:
+    #         print(thread_num, i)
+    #     with torch.no_grad():
+    #         # output = model(input_)
+    #         if is_cuda:
+    #             model = model.cuda()
+    #             node = node.cuda()
+    #             input_ = input_.cuda()
+    #
+    #         try:
+    #             # compute output
+    #             #             output = model(input)
+    #             mid=mid_result[i]
+    #             # print(mid.dtype, node.dtype)
+    #             # for k in range(mid.size()[0]):
+    #             #     mid[k] = mid[k] * node
+    #             mid = mid.mul(node)
+    #         except Exception as e:
+    #             print(e)
+    #         # print("mid_shape: ", (mid.size()))
+    #         if model_name == "res50":
+    #             mid = model.avgpool(mid)
+    #             mid = mid.view(mid.size()[0], -1)
+    #             output = model.fc(mid)
+    #         else:
+    #             mid = mid.view(mid.size()[0], -1)
+    #             output = model.classifier(mid)
+    #
+    #         # loss = criterion(output, target)
+    #         # measure accuracy and record loss
+    #
+    #         # print(output)
+    #         # print(target)
+    #         this_tar = np.array([this_ta for i in range(np.shape(input_)[0])])
+    #         targ = np.argmax(output.detach().cpu().numpy(), axis=1)
+
+    # if is_cuda:
+    #     target = target.cuda()
+
+    # prec1, prec5 = accuracy(output.data, target, topk=(1, 5))
+    # # losses.update(loss.item(), input_.size(0))
+    # top1.update(prec1[0], input_.size(0))
+    # top5.update(prec5[0], input_.size(0))
+    # # measure elapsed time
+    # batch_time.update(time.time() - end)
+    # end = time.time()
+    # if i % print_freq == 0:
+    #     print(str(thread_num), 'Test: [{0}/{1}]\t'
+    #                            'Time {batch_time.val:.3f} ({batch_time.avg:.3f})\t'
+    #                            'Prec@1 {top1.val:.3f} ({top1.avg:.3f})\t'
+    #                            'Prec@5 {top5.val:.3f} ({top5.avg:.3f})'.format(
+    #         i, len(val_loader), batch_time=batch_time,
+    #         top1=top1, top5=top5))
+
+    acc = 0.999 + (2 * this_num - all_num) / 50000
+    recall = this_num / 50
+    prec = this_num / all_num
+    fpr = (all_num - this_num) / 49950
 
     with open("/home/hongwu/python/Image/" + experience_id + "/" + filename + ".txt",
               "a+") as f:
         f.write(
             'save ' + str(
                 thread_num) + ", percent: " + str(
-                node.mean()) + ' :   * Prec@1 {top1.avg:.3f} Prec@5 {top5.avg:.3f} \n'.format(
-                top1=top1,
-                top5=top5))
-
+                node.mean()) + ", all_num: " + str(
+                all_num) + ", this_num: " + str(
+                this_num) + ", prec: " + str(
+                prec) + ' :   * acc {prec:.3f} recall {recall:.3f} \n'.format(
+                prec=acc,
+                recall=recall))
+    print(thread_num, "over!!")
+    return recall, prec, fpr
     # return top1.avg, top5.avg
 
 
@@ -1145,6 +1230,7 @@ def from_layer_x_to_y(layer_x, x, model):
 # 从上一层直接经过标准化之后输入到下一层
 def before_to_after(layer_result, x, model):
     '''
+
     将单层输出输入进行bn之后输出到下一层，并返回下一层的结果
     :param layer_result: 单层输出
     :param x: 层数
@@ -1237,11 +1323,11 @@ def make_dir(train_dir, filename, class_num, image_num, save_dir):
     #     file = files
 
     for i in range(class_num):
-        img = sample(os.listdir(train_dir + filename), image_num)
+        img = sample(os.listdir(train_dir + filename + "/" + filename), image_num)
         # img = os.listdir(train_dir + filename)
-        # print(img)
+        print(img)
         for j in range(image_num):
-            img[j] = train_dir + filename + "/" + img[j]
+            img[j] = train_dir + filename + "/" + filename + "/" + img[j]
             # img[j] = train_dir + sample_dir[i] + '/' + img[j]
         # print(img)
 
@@ -1252,6 +1338,7 @@ def make_dir(train_dir, filename, class_num, image_num, save_dir):
     for cls in data:
         data_img = []
         for img in cls:
+            # print(cv2.imread(img))
             data_img.append(cv2.imread(img))
         data_imglist.append(data_img)
 
@@ -1568,8 +1655,8 @@ def augMidres(index, model, augnum, shape, data_dir="/home/hongwu/python/Image/e
     try:
 
         print("augmid计算：", index)
-        batch_size = 10
-        data_load = data_loader(data_dir + str(index), batch_size=batch_size)
+        batch_size = 100
+        data_load = data_loader(data_dir + str(index), batch_size=batch_size, pin_memory=False)
 
         # layer_result = torch.zeros((1, 256, 6, 6))
         # with torch.no_grad():
@@ -1753,7 +1840,6 @@ def get_node():
 #                     downsize / 1024 / (time.time() - startTime), downsize / 1024 / 1024,
 #                     total_size / 1024 / 1024)
 #                 print(line, end='\r')
-
 
 
 # 通过node修改网络并进行网络性能评估
@@ -2031,20 +2117,23 @@ def get_final():
 
 
 # 计算序列的js， 与之前的方法功能相同。不过改写为适用于多线程
-def cal_2_js(result, thread_num):
+def cal_2_js(result, thread_num, image_num, aug_num, filename, shape):
     print(np.shape(result))
     try:
         print(thread_num, "start: cal_2_js")
 
-        js = np.zeros((6, 6, 49))
-        for j in range(6):
-            for k in range(6):
+        standard = np.load("/data/hongwu/gauss_test_res/n02123045/marker_C/result/mid_result_0.npy")
+
+        js = np.zeros(np.concatenate(([shape[1]], [shape[2]], [image_num - 1])))
+        for j in range(shape[1]):
+            for k in range(shape[2]):
                 # mean = np.mean(result[:, :, j, k], axis=0)
-                mean = result[0, :, j, k]
-                for s in range(49):
+                # mean = result[0, :, j, k]
+                mean = standard[:, thread_num, j, k]
+                for s in range(image_num - 1):
                     js[j][k][s] = JS_divergence_1(result[s + 1, :, j, k], mean)
 
-        np.save(WORK_DIR + experience_id + "/marker_C/result/js_" + str(thread_num) + "_of256.npy", js)
+        np.save(WORK_DIR + experience_id + filename + "/marker_C/result/js_" + str(thread_num) + "withcat0.npy", js)
     except Exception as e:
         print(e)
 
@@ -2383,63 +2472,63 @@ def DW_Stat(js_order):  # 德宾-瓦特逊检验， Durbin-Watson Statistics
     return fenzi / fenmu
 
 
-# 通过js序列计算dw
-def dw_stat_6_6(js_order, thread_num, mode="dw"):
-    print("start:", thread_num)
+# # 通过js序列计算dw
+# def dw_stat_6_6(js_order, thread_num, mode="dw"):
+#     print("start:", thread_num)
+#
+#     try:
+#         if mode == "dw":
+#             node = np.zeros((6, 6))
+#             for i in range(6):
+#                 for j in range(6):
+#                     temp = sm.stats.durbin_watson(js_order[:, i, j])
+#                     if temp > 1.779 or temp < 1.758:
+#                         node[i][j] = 1
+#                     np.save(WORK_DIR + "/marker_D/result/dw_" + str(thread_num) + "_6_6.npy", node)
+#         else:
+#             node01 = np.zeros((6, 6))
+#             node05 = np.zeros((6, 6))
+#             node10 = np.zeros((6, 6))
+#             for i in range(6):
+#                 for j in range(6):
+#                     temp = stattools.coint([(1 + np.sin(7 * k * np.pi / 180)) for k in np.arange(1000)],
+#                                            js_order[:, i, j])
+#                     if temp[0] < temp[2][0] and temp[1] < 0.01:
+#                         node01[i][j] = 1
+#                     if temp[0] < temp[2][1] and temp[1] < 0.05:
+#                         node05[i][j] = 1
+#                     if temp[0] < temp[2][2] and temp[1] < 0.10:
+#                         node10[i][j] = 1
+#                     np.save(WORK_DIR + "/marker_D/result/node_10_" + str(thread_num) + ".npy", node10)
+#                     np.save(WORK_DIR + "/marker_D/result/node_01_" + str(thread_num) + ".npy", node01)
+#                     np.save(WORK_DIR + "/marker_D/result/node_05_" + str(thread_num) + ".npy", node05)
+#     except Exception as e:
+#         print(e)
+#
+#     print("end:", thread_num)
+#     # 直接根据dw结果计算节点保存与否
+#
 
-    try:
-        if mode == "dw":
-            node = np.zeros((6, 6))
-            for i in range(6):
-                for j in range(6):
-                    temp = sm.stats.durbin_watson(js_order[:, i, j])
-                    if temp > 1.779 or temp < 1.758:
-                        node[i][j] = 1
-                    np.save(WORK_DIR + "/marker_D/result/dw_" + str(thread_num) + "_6_6.npy", node)
-        else:
-            node01 = np.zeros((6, 6))
-            node05 = np.zeros((6, 6))
-            node10 = np.zeros((6, 6))
-            for i in range(6):
-                for j in range(6):
-                    temp = stattools.coint([(1 + np.sin(7 * k * np.pi / 180)) for k in np.arange(1000)],
-                                           js_order[:, i, j])
-                    if temp[0] < temp[2][0] and temp[1] < 0.01:
-                        node01[i][j] = 1
-                    if temp[0] < temp[2][1] and temp[1] < 0.05:
-                        node05[i][j] = 1
-                    if temp[0] < temp[2][2] and temp[1] < 0.10:
-                        node10[i][j] = 1
-                    np.save(WORK_DIR + "/marker_D/result/node_10_" + str(thread_num) + ".npy", node10)
-                    np.save(WORK_DIR + "/marker_D/result/node_01_" + str(thread_num) + ".npy", node01)
-                    np.save(WORK_DIR + "/marker_D/result/node_05_" + str(thread_num) + ".npy", node05)
-    except Exception as e:
-        print(e)
-
-    print("end:", thread_num)
-    # 直接根据dw结果计算节点保存与否
-
-
-# 计算格兰杰因果关系检验的p值
-def granger_test(js_order, thread_num):
-    try:
-        print("start:", thread_num)
-        lag = np.zeros((6, 6))
-        gt_6_6 = np.zeros((6, 6))
-        for j in range(6):
-            for k in range(6):
-                gt = stattools.grangercausalitytests(np.vstack((js_order[:, k, j], [(1 + np.sin(7 * i * np.pi / 180))
-                                                                                    for i in np.arange(1000)])).T,
-                                                     maxlag=20, verbose=False)
-
-                lag[j][k] = np.argmax([(gt[i + 1][0]['params_ftest'][0]) for i in range(20)]) + 1
-                gt_6_6[j][k] = gt[lag[j][k]][0]['params_ftest'][1]
-
-        np.save(WORK_DIR + experience_id + "/marker_D/result/gt_" + str(thread_num) + "_6_6.npy", gt_6_6)
-        print("end:", thread_num)
-    except Exception as e:
-        print(e)
-
+# # 计算格兰杰因果关系检验的p值
+# def granger_test(js_order, thread_num):
+#     try:
+#         print("start:", thread_num)
+#         lag = np.zeros((6, 6))
+#         gt_6_6 = np.zeros((6, 6))
+#         for j in range(6):
+#             for k in range(6):
+#                 gt = stattools.grangercausalitytests(np.vstack((js_order[:, k, j], [(1 + np.sin(7 * i * np.pi / 180))
+#                                                                                     for i in np.arange(1000)])).T,
+#                                                      maxlag=20, verbose=False)
+#
+#                 lag[j][k] = np.argmax([(gt[i + 1][0]['params_ftest'][0]) for i in range(20)]) + 1
+#                 gt_6_6[j][k] = gt[lag[j][k]][0]['params_ftest'][1]
+#
+#         np.save(WORK_DIR + experience_id + "/marker_D/result/gt_" + str(thread_num) + "_6_6.npy", gt_6_6)
+#         print("end:", thread_num)
+#     except Exception as e:
+#         print(e)
+#
 
 # 通过p值计算节点
 def get_D_Node(p):
@@ -2457,11 +2546,11 @@ def get_D_Node(p):
 
 
 # 进度条
-def progress(percent, width=50):
+def progress(title, percent, width=50):
     if percent > 1:
         percent = 1
     show_str = (('[%%-%ds]' % width) % (int(percent * width) * '#'))
-    print('\r%s %d%%' % (show_str, int(percent * 100)), end='')
+    print('\r%s %s %.2f%%' % (title, show_str, float(percent * 100)))
 
 
 # 测试原始数据，后面直接在summary中改变loader的root参数即可实现此功能
@@ -2493,21 +2582,21 @@ def test_ori():
 
 
 # 测试hx的数据
-def test_hx():
-    js_1_test = np.load(WORK_DIR + "/marker_C/result/js_1/cat_js.npy")
-    js_1_test = np.diff(js_1_test, axis=0)
-    print(js_1_test.shape)
-    ngt = np.zeros((43264,))
-    lag = np.zeros((43264,))
-    for i in range(43264):
-        progress(i / 43264)
-        gt = stattools.grangercausalitytests(np.vstack((js_1_test[:, i], [
-            (1.1 + 0.9 * math.sin(math.pi * i * 7.0 / 180.0) + float(i) / 500.0 + np.random.randint(-10, 10) / 50.0) for
-            i in np.arange(999)])).T, maxlag=20, verbose=False)
-        lag[i] = np.argmax([(gt[i + 1][0]['params_ftest'][0]) for i in range(20)]) + 1
-        ngt[i] = gt[lag[i]][0]['params_ftest'][1]
-    np.save(WORK_DIR + "/marker_D/result/gt_hx.npy", ngt)
-
+# def test_hx():
+#     js_1_test = np.load(WORK_DIR + "/marker_C/result/js_1/cat_js.npy")
+#     js_1_test = np.diff(js_1_test, axis=0)
+#     print(js_1_test.shape)
+#     ngt = np.zeros((43264,))
+#     lag = np.zeros((43264,))
+#     for i in range(43264):
+#         progress(i / 43264)
+#         gt = stattools.grangercausalitytests(np.vstack((js_1_test[:, i], [
+#             (1.1 + 0.9 * math.sin(math.pi * i * 7.0 / 180.0) + float(i) / 500.0 + np.random.randint(-10, 10) / 50.0) for
+#             i in np.arange(999)])).T, maxlag=20, verbose=False)
+#         lag[i] = np.argmax([(gt[i + 1][0]['params_ftest'][0]) for i in range(20)]) + 1
+#         ngt[i] = gt[lag[i]][0]['params_ftest'][1]
+#     np.save(WORK_DIR + "/marker_D/result/gt_hx.npy", ngt)
+#
 
 def get_kurto(data):
     mean_ = data.mean()
@@ -2610,3 +2699,1055 @@ def generate(filename):
 
     # pool.close()
     # pool.join()
+
+
+'''
+实验步骤如下：
+    1、首先对于每个类，获取其特征的300个节点，也就是保存权重矩阵。然后20个类6000个特征节点，其中第一层的去噪保留位置。
+    2、对于6000个特征节点，通过训练集训练6000*20的分类矩阵，
+    3、对验证集计算其准确率，与原模型对比
+'''
+
+
+def relu(point):
+    data = np.array(point)
+    for i in range(np.shape(data)[0]):
+        if data[i] < 0:
+            data[i] = 0.00001
+    return data
+
+
+def cal_w(point_1, point_2):
+    point_1 = (point_1 + 1e-10)  # /  (point_1.sum() + 1e-7)
+    point_2 = (point_2 + 1e-10)  # / (point_2.sum() + 1e-7)
+    # print(point_1.sum(), point_2.sum())
+    # print(point_1)
+
+    # M = (point_1 + point_2) / 2
+    # distance = 0.5 * scipy.stats.entropy(point_1, M) + 0.5 * scipy.stats.entropy(point_2, M)
+    point_1 = relu(point_1)
+    point_2 = relu(point_2)
+
+    n = np.shape(point_2)[0]
+    a = np.arange(n)
+    distance = wasserstein_distance(a, a, point_1, point_2)
+    return distance
+
+
+# def pool_cal_w(label, thread_num, mode):
+def pool_cal_w(args):
+    try:
+        label, thread_num, mode = args
+
+        print(label, "  start   ", mode)
+        normal = np.load("/data/hongwu/result/" + label + "_normal.npy")
+        if normal.ndim != 2:
+            normal = normal.reshape((100, -1))
+        node = np.load("/data/hongwu/gauss_test_res/" + label + "/w_node.npy")
+        delete = []
+        node = node.reshape(-1, )
+        for i in range(np.shape(node)[0]):
+            if node[i] == 0:
+                delete.append(i)
+
+        if mode == "in":
+
+            if os.path.exists("/data/hongwu/result/new_test/" + label + "/in_w_" + str(thread_num) + ".npy"):
+                print("end: ", thread_num)
+                return
+            data = np.load(
+                "/data/hongwu/gauss_test_res/" + label + "/marker_C/result/mid_result_" + str(thread_num) + ".npy")
+
+            data = data.reshape(100, -1)
+            data = np.delete(data, delete, 1)
+            normal = np.delete(normal, delete, 1)
+
+            # data : [100, 80000]
+            # standard: [100, 80000]
+            print("in start: ", thread_num)
+            n = np.shape(data)[1]
+            w = np.zeros((n,))
+            for i in range(n):
+                w[i] = cal_w(data[:, i], normal[:, i])
+            np.save("/data/hongwu/result/new_test/" + label + "/in_w_" + str(thread_num) + ".npy",
+                    w)
+            print("end: ", thread_num)
+        elif mode == 'out':
+            # if thread_num == class_name.index(label):
+            #     return
+            if os.path.exists("/data/hongwu/result/new_test/" + label + "/out_w_" + str(thread_num) + ".npy"):
+                print("end: ", thread_num)
+                return
+            # data : [20, 100, 80000]
+            # standard: [100, 80000]
+
+            # disk = list()
+            # disk.append(class_name.index(label))
+            x = np.random.randint(1000)
+            while x == class_name.index(label):
+                x = np.random.randint(1000)
+            data = np.zeros((20, 100, 2048, 7, 7))
+            for i in range(20):
+                # x = np.random.randint(1000)
+                # while x in disk:
+                #     x = np.random.randint(1000)
+                # disk.append(x)
+                data[i] = np.load("/data/hongwu/gauss_test_res/" + str(class_name[x])
+                                  # data[i] = np.load("/data/hongwu/gauss_test_res/" + str(class_name[thread_num])
+                                  + "/marker_C/result/mid_result_" + str(i) + ".npy")
+            data = data.reshape((20, 100, -1))
+            data = np.delete(data, delete, 2)
+            normal = np.delete(normal, delete, 1)
+
+            print("out start: ", thread_num)
+            n = np.shape(data)[2]
+            k = np.shape(data)[0]
+            w = np.zeros((k, n))
+            for i in (range(n)):
+                # if i % 20000 == 0:
+                #     print(thread_num, i)
+                for j in range(k):
+                    w[j][i] = cal_w(data[j, :, i], normal[:, i])
+            np.save("/data/hongwu/result/new_test/" + label + "/out_w_" + str(thread_num) + ".npy",
+                    w)
+            print("end: ", thread_num)
+    except Exception as e:
+        print(e)
+
+
+def concept_construct(label):
+    try:
+        print(label, "    start!")
+        if not os.path.exists("/data/hongwu/result/" + str(label) + "_normal.npy"):
+            normal = np.zeros((20, 100, 2048, 7, 7))
+            for epo in (range(20)):
+                normal[epo] = np.load(
+                    "/data/hongwu/gauss_test_res/" + label + "/marker_C/result/mid_result_" + str(epo) + ".npy")
+
+            normal = np.mean(normal, axis=0).reshape((100, -1))
+
+            np.save("/data/hongwu/result/" + str(label) + "_normal.npy", normal)
+
+        print(label, "normal 结束")
+        # 均值
+    except Exception as e:
+        print("出错了！！！", e)
+
+
+def cc(label):
+    try:
+        # print(n)
+        if not os.path.exists("/data/hongwu/result/new_test/" + label + "/"):
+            os.makedirs("/data/hongwu/result/new_test/" + label + "/")
+
+        pool1 = MyPool()
+        # for thread_num in range(20):
+        #
+        # params = []
+        pool1.map(pool_cal_w, [(label, i, "in") for i in range(20)])
+        # for thread_num in range(20):
+        #     pool1.apply_async(pool_cal_w, args=(label, thread_num, "out"))
+        #     params.append((label, thread_num, "out"))
+
+        pool1.map(pool_cal_w, [(label, thread_num, "out") for thread_num in range(20)])
+        pool1.close()
+        pool1.join()
+        global weight_num
+        weight_num += 1
+        print(label, " Wasserstein 距离计算完毕！！！！！！！！！！！！！！！！！！！！！！！！！！！！！！！！！！！！！！！！",
+              weight_num / 1000)
+
+    except Exception as e:
+        print(e)
+
+
+def cw():
+    pool = MyPool()
+    pool.map(cal_weight, class_name)
+    pool.close()
+    pool.join()
+
+
+def cal_weight(label):
+    try:
+        if os.path.exists("/data/hongwu/result/index_" + label + ".npy"):
+            return
+        newNodeNum = 300
+        index = []
+        weight = []
+        node = np.load("/data/hongwu/gauss_test_res/" + label + "/w_node.npy", allow_pickle=True)
+        n = int(node.sum())
+        in_w = np.zeros((20, n))
+        for i in tqdm(range(20)):
+            in_w[i] = np.load("/data/hongwu/result/new_test/" + label + "/in_w_" + str(i) + ".npy")
+
+        node = node.reshape((-1,))
+        # new version
+        # out_w = np.zeros((999, 20, n))
+        # index_ = 0
+        # for i in tqdm(range(1000)):
+        #     if i == class_name.index[label]:
+        #         continue
+        #     out_w[index_] = np.load("/data/hongwu/result/new_test/" + label + "/out_w_" + str(i) + ".npy")
+        #     index_ += 1
+
+        # old version
+        out_w = []
+        for dir in list(os.walk("/data/hongwu/result/new_test/" + label))[0][2]:
+            out_w.append(np.load("/data/hongwu/result/new_test/" + label + "/" + dir))
+        out_w = np.mean(out_w, axis=0)
+
+        ###########################################################################################
+        #
+        # print("cupy")
+        # out_w = cp.asarray(out_w)
+        # in_w = cp.asarray(in_w)
+        # rewardall = cp.median(out_w, axis=0) / (cp.median(in_w, 0) + 0.00000001)
+        # print('x')
+        # all_rewa = (out_w / (in_w + 0.00000001)).T
+        # candidate = cp.argsort(rewardall)[-300:]
+        #
+        # candi_reward = all_rewa[candidate]
+        # candi_cova = cp.corrcoef(candi_reward)
+        #
+        # out_sample_w = out_w.T
+        # mid_w_del = in_w.T
+        #
+        # print(" 数据处理完毕， 开始计算组合！！！！！！！！！！！！！！！！！！！！！！！！！！！！！！！！！！！！！！！  ")
+        #
+        # for node_index in range(newNodeNum):
+        #     cova = candi_cova[node_index]
+        #
+        #     union = []
+        #
+        #     union.extend(sample(list(candidate[[i for i, j in enumerate(cova) if j < -0.1]]), 5))
+        #     union.extend(sample(list(candidate[[i for i, j in enumerate(cova) if 0.3 > j > -0.1]]), 5))
+        #     union.append(candidate[node_index])
+        #     union.extend(sample(list(cp.argsort(rewardall)[:-300]), 4))
+        #     sampleNum = 19
+        #
+        #     x = len(union)
+        #
+        #     union = cp.array([int(x) for x in union])
+        #
+        #     reward = cp.log(out_sample_w[union] / mid_w_del[union])
+        #
+        #     V = cp.cov(reward)
+        #     Er = cp.mean(reward, 1).reshape((x, 1))
+        #     e = cp.ones((x, 1))
+        #
+        #     a = cp.dot(cp.dot(Er.T, cp.linalg.pinv(V)), Er)
+        #     b = cp.dot(cp.dot(Er.T, cp.linalg.pinv(V)), e)
+        #     A = cp.dot(cp.dot(cp.hstack((Er, e)).T, cp.linalg.pinv(V)), cp.hstack((Er, e)))
+        #
+        #     miuP = a / b
+        #     k = cp.hstack((Er, e))
+        #     c = cp.dot(cp.linalg.pinv(V), k)
+        #     d = cp.dot(c, cp.linalg.pinv(A))
+        #     w_star = cp.dot(d, cp.vstack((miuP, [1])))
+        #
+        #     w = w_star / cp.sum(w_star)  # 归一化
+        #
+        #
+        #
+        #
+        #
+        #
+        #
+        #
+        #
+        #
+        #
+        #
+        #
+        #     #     print(reward.shape)
+        #     # v = cp.cov(reward)
+        #     # e = cp.ones((x, 1))
+        #     # #     print(type(reward))
+        #     # #     print([[int(cp.mean(x)) for x in reward]])
+        #     # Er = cp.array([[int(cp.mean(x)) for x in reward]])
+        #     # inver = cp.linalg.inv(v)
+        #     # b1 = cp.dot(Er, inver)
+        #     # b = cp.dot(b1, e)
+        #     # c1 = cp.dot(e.T, inver)
+        #     # c = cp.dot(c1, e)
+        #     # a1 = cp.dot(Er, inver)
+        #     # a = cp.dot(a1, Er.T)
+        #     # d = a[0][0] * c[0][0] - b[0][0] ** 2
+        #     # N = 0
+        #     # #     miu = (b[0][0] ** 2 + d - c[0][0] * N * b[0][0]) / (b[0][0] * c[0][0] - N * c[0][0] * c[0][0])
+        #     # miu = a[0][0] / b[0][0]
+        #     # w_temp = cp.concatenate((Er, e.T)).T
+        #     # Aa = cp.dot(cp.dot(w_temp.T, inver), w_temp)
+        #     # w1 = cp.dot(cp.dot(inver, w_temp), cp.linalg.inv(Aa))
+        #     # #     print(np.array(w1), miu)
+        #     # print(miu)
+        #     # mid = cp.array([[miu], [1.0]])
+        #     # w = cp.dot(w1, mid)
+        #     # w = cp.maximum(w, 0)
+        #     # w = w / cp.sum(w)  # 归一化
+
+        ###########################################################################################
+        rewardall = np.median(out_w, axis=0) / (np.median(in_w, 0) + 0.00000001)
+        all_rewa = (out_w / (in_w + 0.00000001)).T
+        candidate = np.argsort(rewardall)[-300:]
+        candi_reward = all_rewa[candidate]
+        candi_cova = np.corrcoef(candi_reward)
+
+        out_sample_w = out_w.T
+        mid_w_del = in_w.T
+
+        # print(label, " 数据处理完毕， 开始计算组合！！！！！！！！！！！！！！！！！！！！！！！！！！！！！！！！！！！！！！！  ")
+
+        for node_index in range(newNodeNum):
+            cova = candi_cova[node_index]
+
+            union = []
+
+            union.extend(sample(list(candidate[[i for i, j in enumerate(cova) if j < 0.1]]), 5))
+            union.extend(sample(list(candidate[[i for i, j in enumerate(cova) if 0.7 > j > 0.1]]), 5))
+            union.append(candidate[node_index])
+            union.extend(sample(list(np.argsort(rewardall)[:-300]), 4))
+            sampleNum = 19
+
+            x = len(union)
+
+            # one_reward = np.zeros((x, sampleNum))
+            # for i in range(x):
+            #     for j in range(sampleNum):
+            #         if mid_w_del[union[i]][j] == 0:
+            #             one_reward[i][j] = 1
+            #         else:
+            #             one_reward[i][j] = np.log(
+            #                 (out_sample_w[union[i]][j] + 0.000001) / (mid_w_del[union[i]][j] + 0.0000000001)) \
+            #                                / (np.std(mid_w_del[union[i]]) + 0.000001)
+            #
+            # V = np.cov(one_reward)
+            # Er = np.mean(one_reward, 1).reshape((x, 1))
+            # e = np.ones((x, 1))
+            #
+            # a = np.dot(np.dot(Er.T, np.linalg.pinv(V)), Er)
+            # b = np.dot(np.dot(Er.T, np.linalg.pinv(V)), e)
+            # A = np.dot(np.dot(np.hstack((Er, e)).T, np.linalg.pinv(V)), np.hstack((Er, e)))
+            #
+            # miuP = a / b
+            # k = np.hstack((Er, e))
+            # c = np.dot(np.linalg.pinv(V), k)
+            # d = np.dot(c, np.linalg.pinv(A))
+            # w_star = np.dot(d, np.vstack((miuP, [1])))
+
+            reward = np.log(out_sample_w[union] / mid_w_del[union])
+            # print(reward.shape)
+            v = np.cov(reward)
+            e = np.ones((x, 1))
+            Er = np.array([[np.mean(x) for x in reward]])
+            inver = np.linalg.inv(v)
+            b1 = np.dot(Er, inver)
+            b = np.dot(b1, e)
+            c1 = np.dot(e.T, inver)
+            c = np.dot(c1, e)
+            a1 = np.dot(Er, inver)
+            a = np.dot(a1, Er.T)
+            d = a[0][0] * c[0][0] - b[0][0] ** 2
+            N = 0
+            miu = (b[0][0] ** 2 + d - c[0][0] * N * b[0][0]) / (b[0][0] * c[0][0] - N * c[0][0] * c[0][0])
+            # miu = a[0][0] / b[0][0]
+            w_temp = np.concatenate((Er, e.T)).T
+            Aa = np.dot(np.dot(w_temp.T, inver), w_temp)
+            w1 = np.dot(np.dot(inver, w_temp), np.linalg.inv(Aa))
+            w = np.dot(w1, np.array([[miu], [1.0]]))
+            w = np.maximum(w, 0)
+            w = w / np.sum(w)  # 归一化
+
+            #######################################################################
+            next_uni = []
+            for uni in union:
+                tes = 0
+                for x in range(np.shape(node)[0]):
+                    tes += node[x]
+                    if tes == uni + 1:
+                        next_uni.append(x)
+                        break
+            index.append(next_uni)
+            weight.append(w)
+            if node_index % 100 == 0:
+                print(label, node_index / newNodeNum)
+
+        np.save("/data/hongwu/result/index_" + label + ".npy", index)
+        np.save("/data/hongwu/result/weight_" + label + ".npy", weight)
+
+        print(label, "    end!")
+    except Exception as e:
+        print(e)
+
+
+# 对于每个类别，计算权值
+def getNormal():
+    # print(class_name)
+    pool = MyPool()
+    for cls in class_name:
+        pool.apply_async(concept_construct, args=(cls,))
+    pool.close()
+    pool.join()
+    print("计算normal结束！！！！！！！！！！！！！！！！！！！！！！！！！！！！！！")
+
+
+def cal_wasserstein():
+    # params = []
+    # for cls in class_name:
+    #     pool.apply_async(cc, args=(cls,))
+
+    for label in class_name:
+        if not os.path.exists("/data/hongwu/result/new_test/" + label + "/"):
+            os.makedirs("/data/hongwu/result/new_test/" + label + "/")
+
+    pool = MyPool()
+
+    clss = np.load("/data/hongwu/result/clss.npy")
+
+    # params = [(label, i, "in") for label in class_name for i in range(20)]
+    # params.extend([(label, thread_num, "out") for label in class_name for thread_num in range(20)])
+    params = [(label, thread_num, "out") for label in clss for thread_num in range(10)]
+
+    pool.map(pool_cal_w, params)
+    # for thread_num in range(20):
+    #     pool1.apply_async(pool_cal_w, args=(label, thread_num, "out"))
+    #     params.append((label, thread_num, "out"))
+
+    # pool.map(cc, class_name)
+    pool.close()
+    pool.join()
+    print(" get_20 weight   计算结束!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
+
+
+def get(dir, indexes, weights, class_name, state, label_num):
+    try:
+        data = np.zeros((30000, 1))
+        label = np.zeros((1,))
+
+        model = torchvision.models.resnext50_32x4d(pretrained=True)
+        print(dir)
+        batch_size = 128
+        val_loader = data_loader("/data/hongwu/data/" + state + "/" + dir, batch_size=batch_size)
+        with torch.no_grad():
+            for i, (input_, _) in enumerate(val_loader):
+                # progress(title="batch进度：", percent=i/100)
+                input_ = torch.autograd.Variable(input_)
+                output = (model.layer4(model.layer3(model.layer2(model.layer1(model.maxpool(model.relu(model.bn1(
+                    model.conv1(input_))))))))).cpu().detach().numpy()
+                n = np.shape(output)[0]
+                output = output.reshape((n, -1))
+                # 输出维度为[batch_size, 2048, 7, 7]
+
+                # print(n)
+
+                feature = np.zeros((30000, n))
+                for x in range(30000):
+                    for y in range(15):
+                        feature[x] += output[:, int(indexes[x][y])] * weights[x][y]
+                data = np.concatenate((data, feature), axis=1)
+                label = np.concatenate((label, np.ones(n, ) * label_num), axis=0)
+
+        data = data[:, 1:]
+        label = label[1:]
+        print("data: ", np.shape(data))
+        np.save("/data/hongwu/result/" + state + "_data_" + dir + ".npy", data)
+        np.save("/data/hongwu/result/" + state + "_label_" + dir + ".npy", label)
+    except Exception as e:
+        print(e)
+
+
+def consData():
+    indexes = []
+    weights = []
+    for clsn in class_name:
+        indexes.extend(np.load("/data/hongwu/result/index_" + clsn + ".npy", allow_pickle=True))
+        weights.extend(np.load("/data/hongwu/result/weight_" + clsn + ".npy", allow_pickle=True))
+
+    indexes = np.array(indexes)
+    weights = np.array(weights)
+
+    # indexes = np.load("/data/hongwu/class21_index.npy")
+    # weights = np.load("/data/hongwu/class21_w.npy")
+
+    # print("index:")
+    # print(indexes.shape, weights.shape)
+
+    val_cls_label = {}
+    pool = MyPool()
+    for cls in class_name:
+        # pool.apply_async(get, args=(dir, indexes, weights, class_name, "train"))
+        lab_num = class_name.index(cls)
+        val_cls_label[cls] = lab_num
+        pool.apply_async(get, args=(cls, indexes, weights, class_name, "val", lab_num,))
+    pool.close()
+    pool.join()
+
+    np.save("/data/hongwu/result/val_cls_label.npy", val_cls_label)
+
+
+def getFeature(cls, indexes, weights):
+    try:
+
+        # if os.path.exists("/data/hongwu/result/feature_" + cls + ".npy"):
+        #     print(cls, " end train features 结束！！！！！！！！！！！！！！！！！！！！！！!")
+        #     return
+        print(cls, ' start 获取训练 features 数据！！！！！！！！！！！！！！！！！！！！')
+        data_20 = np.zeros((20, 2048, 7, 7))
+        for j in (range(20)):
+            data = np.load(
+                "/data/hongwu/gauss_test_res/" + cls + "/marker_C/result/mid_result_" + str(j) + ".npy")
+            data_20[j] = data[0]
+        print(cls, " 读取数据完毕")
+
+        data = np.reshape(data_20, (20, -1))
+        feature = np.zeros((300000, 20))
+        for x in (range(300000)):
+            for y in range(15):
+                feature[x] += data[:, int(indexes[x][y])] * weights[x][y]
+        np.save("/data/hongwu/result/feature_" + cls + ".npy", feature.T)
+        print(cls, " end train features 结束！！！！！！！！！！！！！！！！！！！！！！!")
+    except Exception as e:
+        print(e)
+
+
+def getTrain():
+    indexes = []
+    weights = []
+    for clsn in class_name:
+        indexes.extend(np.load("/data/hongwu/result/index_" + clsn + ".npy", allow_pickle=True))
+        weights.extend(np.load("/data/hongwu/result/weight_" + clsn + ".npy", allow_pickle=True))
+    indexes = np.array(indexes)
+    weights = np.array(weights)
+
+    print("index over!")
+    # params = []
+    # for i in range(1000):
+    #     params.append([class_name[i], indexes, weights])
+    pool = MyPool(20)
+    for i in tqdm(range(1000)):
+        pool.apply_async(getFeature, (class_name[i], indexes, weights,))
+        # getFeature(class_name[i], indexes, weights)
+    pool.close()
+    pool.join()
+
+    print(" 训练数据计算！！！！！！！！！！！！！over!!")
+
+
+def getValMid(cls):
+    try:
+        if os.path.exists("/data/hongwu/result/val_data_" + cls + ".npy"):
+            print(cls, " 计算验证集中间结果！！          over  !")
+            return
+
+        print(cls, "start!")
+        model = torchvision.models.resnext50_32x4d(pretrained=True)
+        model.eval().cuda()
+        val_loader = data_loader("/data/hongwu/data/val/" + cls)
+        data = np.zeros((1, 2048, 7, 7))
+        for i, (input_, _) in enumerate(val_loader):
+            input_ = torch.autograd.Variable(input_).cuda()
+            output = (model.layer4(model.layer3(model.layer2(model.layer1(model.maxpool(model.relu(model.bn1(
+                model.conv1(input_))))))))).cpu().detach().numpy()
+
+            data = np.concatenate([data, output], axis=0)
+        data = data[1:]
+        np.save("/data/hongwu/result/val_data_" + cls + ".npy", data)
+        print(cls, " 计算验证集中间结果！！          over  !")
+    except Exception as e:
+        print(cls, " 出错了哦：       ", e)
+
+
+def getVal_feature(args):
+    try:
+
+        cls, indexes, weights = args
+        # if os.path.exists("/data/hongwu/result/val_feature_" + cls + ".npy"):
+        #     print(cls, " 计算验证集features！！！！              end!")
+        #     return
+
+        print(cls, ' 计算验证集features！！！ start')
+        data = np.load("/data/hongwu/result/val_data_" + cls + ".npy")
+        print(cls, " 验证集读取数据完毕")
+        data = np.reshape(data, (50, -1))
+        feature = np.zeros((300000, 50))
+        for x in range(300000):
+            for y in range(15):
+                feature[x] += data[:, int(indexes[x][y])] * weights[x][y]
+        np.save("/data/hongwu/result/val_feature_" + cls + ".npy", feature.T)
+        print(cls, " 计算验证集features！！！！              end!")
+    except Exception as e:
+        print(cls, "出错了哦            ", e)
+
+
+def getVal():
+    indexes = []
+    weights = []
+    for clsn in class_name:
+        indexes.extend(np.load("/data/hongwu/result/index_" + clsn + ".npy", allow_pickle=True))
+        weights.extend(np.load("/data/hongwu/result/weight_" + clsn + ".npy", allow_pickle=True))
+    indexes = np.array(indexes)
+    weights = np.array(weights)
+
+    # pool = MyPool()
+    # pool.map(getValMid, class_name)
+    # pool.close()
+    # pool.join()
+
+    # for cls in class_name:
+    #     getValMid(cls)
+
+    params = []
+    for i in range(1000):
+        params.append([class_name[i], indexes, weights])
+
+    pool = MyPool()
+    pool.map(getVal_feature, params)
+    pool.close()
+    pool.join()
+
+
+class Net(nn.Module):
+    # def __init__(self):
+    #     super(Net, self).__init__()
+    #     self.attention = nn.MultiheadAttention(num_heads=4, embed_dim=300)
+    #     self.fc1 = nn.Linear(6000, 20)
+    #
+    # def forward(self, input):
+    #     # return F.softmax(self.fc3(F.relu(self.fc2(F.relu(self.fc1(input))))))
+    #     # return self.fc2(F.relu(F.dropout(self.fc1((input)), p=0.2, training=self.training)))
+    #     #         # return F.softmax(self.fc2(F.relu(self.fc1(input))))
+    #
+    #     return self.fc1(F.relu(self.attention(F.relu(input))))
+
+    def __init__(self):
+        super(Net, self).__init__()
+        self.attention = nn.MultiheadAttention(num_heads=10, embed_dim=300, dropout=0.5)
+        self.fc = nn.Linear(300000, 1000)
+        # self.fc2 = nn.Linear(3000, 1000)
+
+    def forward(self, x):
+        x = F.relu(x)
+        x = x.view((-1, 1000, 300))
+        x = F.relu(x)
+        output, _ = self.attention(x, x, x)
+        output = output.view(-1, 300000)
+        output = self.fc(output)
+        return output
+        # x = F.adaptive_avg_pool2d(x, output_size=(1, 1))
+        # x = x.view(-1, 2048)
+        # return self.fc2(F.relu(F.dropout(self.fc1(F.relu(x)), p=0.5)))
+        # x, _ = self.attention(x, x, x)
+        # return self.fc1(F.relu(x, inplace=False))
+
+
+def train(is_cuda=False):
+    # class_name = ["n01440764", "n01491361", "n01498041", "n01518878", "n01532829", "n01558993", "n01582220",
+    #               "n01443537", "n01494475", "n01514668", "n01530575", "n01534433", "n01560419", "n01592084",
+    #               "n01484850", "n01496331", "n01514859", "n01531178", "n01537544", "n01580077"
+    #               ]
+    #
+
+    # model = torchvision.models.__dict__['resnet50'](pretrained=True)
+    # data = np.zeros((1, 6000))
+    # label = np.zeros((1,))
+    # for dir in class_name:
+    #     dataa = (np.load("/data/hongwu/result/train_data_" + dir + ".npy", allow_pickle=True))
+    #     labe = (np.load("/data/hongwu/result/train_label_" + dir + ".npy", allow_pickle=True))
+    #
+    #     data = np.concatenate((data, dataa.T), axis=0)
+    #     label = np.concatenate((label, labe), axis=0)
+    # data = data[1:]
+    # label = label[1:]
+
+    # np.save("/data/hongwu/result/data21.npy", data)
+    # np.save("/data/hongwu/result/label21.npy", label)
+
+    # data = np.load("/data/hongwu/result/data1.npy")
+    # label = np.load("/data/hongwu/result/label1.npy")
+    #
+    # data = np.load("/data/hongwu/result/features.npy").T
+    # label = np.arange(40000) // 2000
+
+    # data = np.load("/data/hongwu/all_changeaug_level1_20.npy")
+
+    # data = np.load("/data/hongwu/data.npy")
+    # data = np.reshape(data, (40000, 2048, 7, 7))
+    # label = np.arange(40000) // 2000
+
+    # train_cls_label = {}
+    # data = np.zeros((1000, 500, 300000))
+    # for i in tqdm(range(1000)):
+    #     data[i] = np.load("/data/hongwu/result/feature_" + class_name[i] + ".npy")
+    #     # train_cls_label[class_name[i]] = i
+    # data = data.reshape((500000, 300000))
+    # np.save("/data/hongwu/result/data100.npy", data)
+    # data = np.load("/data/hongwu/result/data100.npy")
+    # label = np.arange(500000) // 500
+
+    # data = np.zeros((100, 2000, 30000))
+    # for i in tqdm(range(100)):
+    #     data[i] = np.load("/data/hongwu/result/feature_" + class_name[i] + ".npy")
+    # data = np.reshape(data, (200000, 30000))
+    # np.save("/data/hongwu/result/features_all.npy", data)
+    # data = np.load("/data/hongwu/result/data_all.npy")
+    # label = np.arange(2000000) // 2000
+
+    # val_data = np.zeros((1000, 50, 300000))
+    # val_label = []
+    # for i in tqdm(range(1000)):
+    #     val_data[i] = np.load("/data/hongwu/result/val_feature_" + class_name[i] + ".npy")
+    #     val_label.extend([i for j in range(np.shape(val_data[i])[0])])
+    # print(len(val_label))
+    # val_data = val_data.reshape((50000, 300000))
+    # np.save("/data/hongwu/result/val_features_all.npy", val_data)
+    # np.save("/data/hongwu/result/val_label_all.npy", val_label)
+    # val_data = np.load("/data/hongwu/result/val_data_all.npy")
+    # val_label = np.arange(50000) // 50
+
+    # np.save("/data/hongwu/result/train_cls_label.npy", train_cls_label)
+
+    # val_data = np.zeros((1, 30000))
+
+    # val_label = np.zeros((1,))
+    # for cls in tqdm(class_name):
+    #     # dataa = (np.load("/data/hongwu/result/val_data_" + cls + ".npy", allow_pickle=True))
+    #     labe = (np.load("/data/hongwu/result/val_label_" + cls + ".npy", allow_pickle=True))
+    #
+    #     # val_data = np.concatenate((val_data, dataa.T), axis=0)
+    #     val_label = np.concatenate((val_label, labe), axis=0)
+
+    # val_data = val_data[1:]
+    # np.save("/data/hongwu/result/val_data100.npy", val_data)
+    # val_data = np.load("/data/hongwu/result/val_data100.npy")
+    # val_label = np.arange(5000) // 50
+    # val_label = val_label[1:]
+    #
+    # np.save("/data/hongwu/result/val_data21.npy", val_data)
+    # np.save("/data/hongwu/result/val_label21.npy", val_label)
+
+    # val_data = np.load("/data/hongwu/result/val_data1.npy")
+    # val_label = np.load("/data/hongwu/result/val_label1.npy")
+
+    # val_data = np.load("/data/hongwu/val_change20.npy").T
+    # val_label = np.arange(1000) // 50
+
+    # val_data = torch.load("/data/hongwu/ch5_change20_val.pt")
+    # val_label = np.arange(1000) // 50
+    #
+    #
+    # data = np.random.random((200, 2048, 7, 7))
+    # label = [np.random.randint(2) for i in range(200)]
+    #
+    # val_data = np.random.random((20, 2048, 7, 7))
+    # val_label = [np.random.randint(2) for i in range(20)]
+
+    net = Net()
+    net = net.cuda()
+    torch.distributed.init_process_group(backend='nccl', rank=0, world_size=1)
+    net = nn.parallel.DistributedDataParallel(net, find_unused_parameters=True)
+
+    save_file = "./new_test.txt"
+
+    print("数据准备完毕")
+    criterion = nn.CrossEntropyLoss()
+    optimizer = torch.optim.SGD(net.parameters(), lr=0.0001, momentum=0.9)
+
+    for tratime in range(1):
+
+        print('第', tratime, '次训练')
+
+        data = np.zeros((1000, 20, 300000))
+        val_data = np.zeros((1000, 50, 300000))
+        for i in tqdm(range(1000)):
+            data[i] = np.load("/data/hongwu/result/feature_" + class_name[i] + ".npy", mmap_mode='r')
+            val_data[i] = np.load("/data/hongwu/result/val_feature_" + class_name[i] + ".npy", mmap_mode='r')
+        data = data.reshape((20000, 300000))
+        label = np.arange(20000) // 20
+        dataset = TensorDataset(torch.Tensor(data), torch.LongTensor(label))
+        sampler = DistributedSampler(dataset)
+        train_loader = DataLoader(dataset=dataset, batch_size=128, num_workers=0, sampler=sampler)
+
+        val_label = np.arange(50000) // 50
+        val_data = val_data.reshape((50000, 300000))
+        val_dataset = TensorDataset(torch.Tensor(val_data), torch.LongTensor(val_label))
+        val_loader = DataLoader(dataset=val_dataset, batch_size=50, num_workers=0)
+
+        print_freq = 100
+        print("开始训练")
+        for epoch in range(100):
+            batch_time = AverageMeter()
+            data_time = AverageMeter()
+            losses = AverageMeter()
+            top1 = AverageMeter()
+            # top5 = AverageMeter()
+
+            # switch to train mode
+            net.train()
+
+            end = time.time()
+            for i, (input, target) in enumerate(train_loader):
+                # print(target)
+                # measure data loading time
+                # print(target)
+                input = torch.where(torch.isnan(input), torch.full_like(input, 0), input)
+                data_time.update(time.time() - end)
+                input_var = torch.autograd.Variable(input)
+                target_var = torch.autograd.Variable(target)
+
+                # print(input_var, target_var)
+                # print(np.shape(input_var), np.shape(target_var))
+
+                # if is_cuda:
+                net = net.cuda()
+                input_var = input_var.cuda()
+                target_var = target_var.cuda()
+
+                # compute output
+                output = net(input_var)
+                loss = criterion(output, target_var)
+                # if loss.item() < 0.001:
+                #     print(np.shape(output), loss, "///////////////////////////////")
+                # measure accuracy and record loss
+                acc1 = accuracy(output, target_var, topk=(1,))
+                losses.update(loss.item(), input_var.size(0))
+                top1.update(acc1[0], input_var.size(0))
+
+                # compute gradient and do SGD step
+                optimizer.zero_grad()
+                loss.backward()
+                optimizer.step()
+
+                # measure elapsed time
+                batch_time.update(time.time() - end)
+                end = time.time()
+
+                # Info log every args.print_freq
+                if i % print_freq == 0:
+                    print('Epoch: [{0}][{1}/{2}]\t'
+                          'Time {batch_time.val:.3f} ({batch_time.avg:.3f})\t'
+                          'Data {data_time.val:.3f} ({data_time.avg:.3f})\t'
+                          'Loss {loss.val:.2f} ({loss.avg:.2f})\t'
+                          'Prec@1 {top1_val:.2f} ({top1_avg:.2f})\t'.format(
+                        epoch, i, len(train_loader), batch_time=batch_time,
+                        data_time=data_time, loss=losses,
+                        top1_val=np.asscalar(top1.val.cpu().numpy()),
+                        top1_avg=np.asscalar(top1.avg.cpu().numpy())))
+                    with open(save_file, 'a+', encoding='utf-8') as f:
+                        f.write('Epoch: [{0}][{1}/{2}]\t'
+                                'Time {batch_time.val:.3f} ({batch_time.avg:.3f})\t'
+                                'Data {data_time.val:.3f} ({data_time.avg:.3f})\t'
+                                'Loss {loss.val:.2f} ({loss.avg:.2f})\t'
+                                'Prec@1 {top1_val:.2f} ({top1_avg:.2f})\t\n'.format(
+                            epoch, i, len(train_loader), batch_time=batch_time,
+                            data_time=data_time, loss=losses,
+                            top1_val=np.asscalar(top1.val.cpu().numpy()),
+                            top1_avg=np.asscalar(top1.avg.cpu().numpy())))
+
+                    # top5_val=np.asscalar(top5.val.cpu().numpy()),
+                    # top5_avg=np.asscalar(top5.avg.cpu().numpy())))
+            # val_batch_time = AverageMeter()
+            # val_losses = AverageMeter()
+            # val_top1 = AverageMeter()
+            # val_top5 = AverageMeter()
+            #
+            # im_dict = imagenet_class_index_dic()
+            # # print(im_dict)
+            #
+            # val_print_freq = 100
+            # end = time.time()
+
+            # for j, (val_input, val_target) in enumerate(val_loader):
+            #     net = net.eval()
+            #     with torch.no_grad():
+            #         # compute output
+            #
+            #         # print(val_target)
+            #         # val_input = val_input.cuda()
+            #         # val_target = val_target.cuda()
+            #         # midres = model.avgpool(val_input).view(-1, 2048)
+            #         # print(val_target)
+            #         # print(target)
+            #         #
+            #         # val_output = model.fc(midres)
+            #         val_output = net(val_input)
+            #         # val_output = model(val_input)
+            #         # print([np.argmax(val_output[i].numpy()) for i in range(np.shape(val_output)[0])])
+            #         loss = criterion(val_output, val_target)
+            #         # measure accuracy and record loss
+            #         prec1, prec5 = accuracy(val_output, val_target, topk=(1, 5))
+            #         val_losses.update(loss.item(), val_input.size(0))
+            #         val_top1.update(prec1[0], val_input.size(0))
+            #         # measure elapsed time
+            #         val_batch_time.update(time.time() - end)
+            #         end = time.time()
+            #         if j % val_print_freq == 0:
+            #             print('Test: [{0}/{1}]\t'
+            #                   'Time {batch_time.val:.3f} ({batch_time.avg:.3f})\t'
+            #                   'Loss {loss.val:.4f} ({loss.avg:.4f})\t'
+            #                   'Prec@1 {top1.val:.2f} ({top1.avg:.2f})\t'.format(
+            #                 j, len(val_loader), batch_time=val_batch_time, loss=val_losses,
+            #                 top1=val_top1))
+            #
+            # # train_result[epoch][0] = top1.avg
+            # # train_result[epoch][1] = val_top1.avg
+            # print(' * Loss@1 {loss.avg: .3f} Prec@1 {top1.avg:.3f} Prec@5 {top5.avg:.3f}'
+            #       .format(loss=val_losses, top1=val_top1, top5=val_top5))
+
+            if epoch % 10 == 9:
+
+                val_losses = AverageMeter()
+                val_top1 = AverageMeter()
+                net.eval()
+                for i, (val_data, val_target) in enumerate(val_loader):
+                    val_data = val_data.cuda()
+                    val_data = torch.where(torch.isnan(val_data), torch.full_like(val_data, 0), val_data)
+                    result = net(val_data)
+                    target = val_target.cuda()
+                    loss = criterion(result, target)
+                    acc1 = accuracy(result, target, topk=(1,))
+                    val_losses.update(loss.item(), val_data.size(0))
+                    val_top1.update(acc1[0], val_data.size(0))
+                print("验证集准确率为", val_top1.avg, '             loss:', val_losses.avg)
+
+                with open(save_file, 'a+', encoding='utf-8') as f:
+                    f.write("验证集准确率为" + str(val_top1.avg) + '             loss:' + str(val_losses.avg) + '\n')
+
+    # np.save("/data/hongwu/result/train_result.npy", train_result)
+    print('Finished Training')
+
+    # 验证集的准确率
+
+
+def trans_tensor_from_image(dir, arch):
+    # device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device = 'cpu'
+    normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
+                                     std=[0.229, 0.224, 0.225])
+
+    if arch == 'alexnet':
+        normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
+                                         std=[0.229, 0.224, 0.225])
+
+    transform_data_loader = torch.utils.data.DataLoader(
+        datasets.ImageFolder(dir, transforms.Compose([
+            transforms.Resize(256),
+            transforms.CenterCrop(224),
+            transforms.ToTensor(),
+            normalize
+        ])),
+        batch_size=32,
+        shuffle=False,
+        num_workers=0,
+        pin_memory=True
+    )
+
+    # transform_data_loader = torch.utils.data.DataLoader(
+    #     datasets.ImageFolder(dir, transforms.Compose([  # [1]
+    #         transforms.Resize(256),  # [2]
+    #         transforms.CenterCrop(227),  # [3]
+    #         transforms.ToTensor(),  # [4]
+    #     ])),
+    #     batch_size=args.b, shuffle=False,
+    #     num_workers=2, pin_memory=True)
+
+    outputs = None
+
+    with torch.no_grad():
+        # print('2')
+        for it_loader_batch_i, (image_input, target) in enumerate(transform_data_loader):
+            image_input, target = image_input.to(device), target.to(device)
+
+            # print('target is ', target)
+            inputs = image_input.cpu()
+
+            if it_loader_batch_i == 0:
+                outputs = inputs
+            else:
+                outputs = torch.cat((outputs, inputs))
+
+    return outputs
+
+
+def test():
+    ids = np.load("/data/hongwu/result/ids.npy", allow_pickle=True)
+    # print(ids)
+
+    model = torchvision.models.__dict__['resnet50'](pretrained=True)
+    result = []
+    for x in range(100):
+        input = trans_tensor_from_image("/data/hongwu/data/val/" + class_name[x], " ")
+        model.eval()
+        val_output = model(input)
+        # print(np.shape(input))
+        target = [int(ids.item()[x]) for i in range(50)]
+        pre1 = accuracy(val_output, torch.LongTensor(target), (1,))
+        result.append(pre1[0].item())
+        print(pre1[0].item())
+    print(result, np.mean(result))
+    np.save("/data/hongwu/result/pre1.npy", result)
+
+
+def mkdirsds():
+    # class_name=[
+    #     "n01440764", "n01491361", "n01498041", "n01518878", "n01532829", "n01558993", "n01582220",
+    #     "n01443537", "n01494475", "n01514668", "n01530575", "n01534433", "n01560419", "n01592084",
+    #     "n01484850", "n01496331", "n01514859", "n01531178", "n01537544", "n01580077"
+    # ]
+    for dir in class_name:
+        os.makedirs("/data/hongwu/data/train/" + dir + "/val/class/")
+        os.makedirs("/data/hongwu/data/val/" + dir + "/val/class/")
+
+    for dir in class_name:
+        # for file in os.listdir("/data/imagenet_2012/train/" + dir + "/" + dir):
+        #     shutil.copy("/data/imagenet_2012/train/" + dir + "/" + dir + "/" + file,
+        #                 "/data/hongwu/data/train/" + dir + "/val/class/" + file)
+        for file in os.listdir("/data/imagenet_2012/val/" + dir):
+            shutil.copy("/data/imagenet_2012/val/" + dir + "/" + file,
+                        "/data/hongwu/data/val/" + dir + "/val/class/" + file)
+
+    for ids in os.listdir("/data/hongwu/data/val/"):
+        if not os.path.exists("/data/hongwu/data/val/" + ids + "/val/" + ids):
+            os.makedirs("/data/hongwu/data/val/" + ids + "/val/" + ids)
+        try:
+            for files in os.listdir("/data/hongwu/data/val/" + ids):
+                shutil.move("/data/hongwu/data/val/" + ids + "/" + files,
+                            "/data/hongwu/data/val/" + ids + "/val/" + ids + "/" + files)
+        except Exception as e:
+            print(e)
+
+    print("数据导入文件夹完毕！！！！！！！！！！！！！！！！！！！！！！")
+
+
+def onedata(cls):
+    try:
+        # data = np.load("/data/hongwu/result/feature_" + cls + ".npy")
+        # data = pd.DataFrame(data)
+        # data['label'] = class_name.index(cls)
+        # # print(data.info())
+        # data.to_csv("/data/hongwu/result/data.csv", index=False, header=False, mode='a')
+        if os.path.exists("/data/hongwu/result/feature_" + cls + "_" + str(99) + ".npy"):
+            print(cls)
+            return
+        data = np.load("/data/hongwu/result/feature_" + cls + ".npy")
+
+        if data.shape[0] != 500:
+            data = data.T
+        for i in (range(100)):
+            if not os.path.exists("/data/hongwu/result/feature_" + cls + "_" + str(i) + ".npy"):
+                np.save("/data/hongwu/result/feature_" + cls + "_" + str(i) + ".npy", data[5 * i:5 * (i + 1)])
+        print(cls)
+    except Exception as e:
+        print(cls, e)
+
+
+def getpdcsv():
+    pool = MyPool(10)
+    pool.map(onedata, class_name)
+    pool.close()
+    pool.join()
+    # onedata(class_name[0])
+    # for cls in class_name:
+    #     onedata(cls)
+
+# def new_data():
